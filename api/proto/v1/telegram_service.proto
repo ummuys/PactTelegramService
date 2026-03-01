@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package pact.telegram.v1;
+
+option go_package = "github.com/ummuys/pacttelegramservice/api/pb/v1;telegramservicev1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+service TelegramService {
+  rpc CreateSession(google.protobuf.Empty) returns (stream CreateSessionEvent);
+  rpc SubmitPassword(SubmitPasswordRequest) returns (SubmitPasswordEvent);
+  rpc DeleteSession(DeleteSessionRequest) returns (google.protobuf.Empty);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc SubscribeMessages(SubscribeMessagesRequest) returns (stream MessageUpdate);
+}
+
+
+//  ------- EVENT RESPONSE -------
+
+message SessionState {
+  string message = 1;
+  SessionStatus status = 2;
+}
+
+// ------- CREATE SESSION -------
+
+message CreateSessionEvent {
+  oneof event {
+    CreateSessionResponse session_response = 1;
+    SessionState session_state = 2;
+  }
+}
+
+message CreateSessionResponse {
+  string session_id = 1;
+  string qr_code = 2;
+}
+
+
+// ------- SUBMIT PASSWORD -------
+
+message SubmitPasswordRequest {
+  string session_id = 1;
+  string password = 2;
+}
+
+
+message SubmitPasswordEvent {
+    oneof event {
+    google.protobuf.Empty empty = 1;
+    SessionState session_state = 2;
+  }
+}
+
+// ------- DELETE SESSION -------
+message DeleteSessionRequest {
+  string session_id = 1;
+}
+
+
+// ------- SEND MESSAGE REQUEST -------
+
+message SendMessageRequest {
+  string session_id = 1;
+  string peer = 2;
+  string text = 3;
+}
+
+message SendMessageResponse {
+  int64 message_id = 1;
+}
+
+
+// ------- SUBSCRIBE MESSAGES REQUEST -------
+
+message SubscribeMessagesRequest {
+  string session_id = 1;
+}
+
+message MessageUpdate {
+  int64 message_id = 1;
+  string from = 2;
+  string text = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+
+
+// ---- ENUMS ----
+
+enum SessionStatus {
+  SESSION_STATUS_PASSWORD_NEEDED = 0;
+  SESSION_STATUS_AUTHORIZED = 1;
+  SESSION_STATUS_UNAUTHENTICATED = 2;
+  SESSION_STATUS_SESSION_NOT_FOUND = 3;
+  SESSION_STATUS_DEADLINE_EXCEEDED = 4;
+}
