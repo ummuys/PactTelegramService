@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/rs/zerolog"
 	tsv1 "github.com/ummuys/pacttelegramservice/api/pb/v1"
@@ -51,14 +52,8 @@ func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.T
 				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
 			}
 
-			switch {
-			case err == nil:
-				tsa.sendCreateSessionState(stream, tsv1.SessionStatus_SESSION_STATUS_AUTHORIZED, "auth successful")
-				return nil
-			default:
-				tsa.logger.Warn().Err(err).Msg("")
-				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
-			}
+			tsa.logger.Warn().Err(err).Msg("")
+			return status.Error(codes.Internal, errs.ErrInternalServer.Error())
 
 		// SESSION SIGNAL READY
 		case state, ok := <-chanels.StateChan:
@@ -70,6 +65,9 @@ func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.T
 			case tgapi.StateNeedPassword:
 				tsa.sendCreateSessionState(stream, tsv1.SessionStatus_SESSION_STATUS_PASSWORD_NEEDED, "you need to use SubmitPassword, because you have 2FA")
 				return nil
+			case tgapi.StateAuthSuccessful:
+				tsa.sendCreateSessionState(stream, tsv1.SessionStatus_SESSION_STATUS_AUTHORIZED, "auth successful")
+				return nil
 			}
 		}
 
@@ -78,7 +76,8 @@ func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.T
 
 func (tsa *TelegramServiceAdapter) SubmitPassword(ctx context.Context, in *tsv1.SubmitPasswordRequest) (*tsv1.SubmitPasswordEvent, error) {
 
-	if err := tsa.tgAPI.SubmitPassword(in.SessionId, in.Password); err != nil {
+	if err := tsa.svc.SubmitPassword(in.SessionId, in.Password); err != nil {
+		fmt.Println(err)
 		switch {
 		case errors.Is(err, errs.ErrInvalidPassword):
 			return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
@@ -117,22 +116,22 @@ func (tsa *TelegramServiceAdapter) SubmitPassword(ctx context.Context, in *tsv1.
 	}}, nil
 }
 
-func (tsa *TelegramServiceAdapter) DeleteSession(ctx context.Context, in *tsv1.DeleteSessionRequest) (*emptypb.Empty, error) {
-	if err := tsa.tgAPI.DeleteSession(in.SessionId, ctx); err != nil {
-		switch {
-		case errors.Is(err, errs.ErrSessionNotFound):
-			tsa.logger.Error().Err(err).Msg("")
-			return &emptypb.Empty{}, status.Error(codes.NotFound, errs.ErrSessionNotFound.Error())
-		default:
-			tsa.logger.Error().Err(err).Msg("")
-			return &emptypb.Empty{}, status.Error(codes.Internal, errs.ErrInternalServer.Error())
-		}
-	}
-	return &emptypb.Empty{}, nil
-}
+// func (tsa *TelegramServiceAdapter) DeleteSession(ctx context.Context, in *tsv1.DeleteSessionRequest) (*emptypb.Empty, error) {
+// 	if err := tsa.tgAPI.DeleteSession(in.SessionId, ctx); err != nil {
+// 		switch {
+// 		case errors.Is(err, errs.ErrSessionNotFound):
+// 			tsa.logger.Error().Err(err).Msg("")
+// 			return &emptypb.Empty{}, status.Error(codes.NotFound, errs.ErrSessionNotFound.Error())
+// 		default:
+// 			tsa.logger.Error().Err(err).Msg("")
+// 			return &emptypb.Empty{}, status.Error(codes.Internal, errs.ErrInternalServer.Error())
+// 		}
+// 	}
+// 	return &emptypb.Empty{}, nil
+// }
 
 func (tsa *TelegramServiceAdapter) SendMessage(ctx context.Context, in *tsv1.SendMessageRequest) (*tsv1.SendMessageResponse, error) {
-	id, err := tsa.tgAPI.SendMessage(in.SessionId, in.Peer, in.Text, ctx)
+	id, err := tsa.svc.SendMessage(ctx, in.SessionId, in.Peer, in.Text)
 	if err != nil {
 		switch {
 		case errors.Is(err, errs.ErrSessionNotFound):
@@ -148,7 +147,7 @@ func (tsa *TelegramServiceAdapter) SendMessage(ctx context.Context, in *tsv1.Sen
 
 func (tsa *TelegramServiceAdapter) SubscribeMessages(in *tsv1.SubscribeMessagesRequest, stream tsv1.TelegramService_SubscribeMessagesServer) error {
 	ctx := stream.Context()
-	ch, err := tsa.tgAPI.SubscribeMessages(in.SessionId, ctx)
+	ch, err := tsa.svc.SubscribeMessages(ctx, in.SessionId)
 	if err != nil {
 		switch {
 		case errors.Is(err, errs.ErrSessionNotFound):

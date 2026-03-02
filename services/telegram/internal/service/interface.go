@@ -1,28 +1,14 @@
 package service
 
 import (
-	"github.com/rs/zerolog"
-	"github.com/ummuys/pacttelegramservice/services/telegram/internal/repository"
+	"context"
+
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/tgapi"
 )
 
 type TelegramService interface {
 	CreateSession() tgapi.SessionInfoCh
 	SubmitPassword(sessionID, password string) error
-	SendMessage()
-	SubscribeMessages()
-}
-
-type telegramService struct {
-	sessionManager tgapi.SessionManager
-	repos          repository.SessionRepository
-	logger         zerolog.Logger
-}
-
-func (ts *telegramService) CreateSession() tgapi.SessionInfoCh {
-	return ts.CreateSession()
-}
-
-func (ts *telegramService) SubmitPassword(sessionID, password string) error {
-	return ts.sessionManager.SubmitPassword(sessionID, password)
+	SendMessage(ctx context.Context, sessionID, peer, txt string) (int64, error)
+	SubscribeMessages(ctx context.Context, sessionID string) (<-chan tgapi.BroadcastMessage, error)
 }

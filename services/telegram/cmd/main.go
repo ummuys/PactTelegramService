@@ -14,7 +14,8 @@ import (
 	"github.com/ummuys/pacttelegramservice/pkg/logger"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/adapter"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/repository"
-	"github.com/ummuys/pacttelegramservice/services/telegram/internal/telegramapi"
+	"github.com/ummuys/pacttelegramservice/services/telegram/internal/service"
+	"github.com/ummuys/pacttelegramservice/services/telegram/internal/tgapi"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -42,7 +43,7 @@ func main() {
 
 	cfg, err := config.ParseTelegramServiceConfig()
 	if err != nil {
-		logs.Fatal().Err(err).Msg("config")
+		logs.Fatal().Err(err).Msg("cfg")
 	}
 
 	lis, err := net.Listen(cfg.Network, cfg.Port)
@@ -50,11 +51,16 @@ func main() {
 		logs.Fatal().Err(err).Msg("listener")
 	}
 
+	// for tgapi //
+
 	sr := repository.NewSessionRepository()
+	sm := tgapi.NewSessionManager(ctx, cfg.AppID, cfg.AppHash, logs)
+	if err != nil {
+		logs.Fatal().Err(err).Str("component", "session_manager").Msg("")
+	}
+	ts := service.NewTelegramService(sm, sr, logs)
 
-	tgAPI := telegramapi.NewTelegramClient(sr, cfg.AppID, cfg.AppHash, logs, ctx)
-
-	tsAdpt := adapter.NewTelegramServiceAdapter(tgAPI, logs)
+	tsAdpt := adapter.NewTelegramServiceAdapter(ts, logs)
 
 	srv := grpc.NewServer()
 	tsv1.RegisterTelegramServiceServer(srv, tsAdpt)

@@ -6,19 +6,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gotd/td/session"
-	"github.com/gotd/td/tg"
 	"github.com/rs/zerolog"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/errs"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/repository"
 )
-
-// ---------------------------------------------------------- //
-
-type commands interface {
-	run(rctx context.Context, api *tg.Client)
-}
-
-///
 
 type sessionManager struct {
 	appID   int
@@ -59,11 +50,13 @@ func (sm *sessionManager) CreateSession() SessionInfoCh {
 
 		storage: storage,
 
+		hub: &broadcastHub{subs: make(map[string]chan BroadcastMessage)},
+
 		cmdCh:   make(chan commands, 64),
 		qrCh:    make(chan string, 10),
 		stateCh: make(chan SessionState, 10),
 		errCh:   make(chan error, 1),
-		passCh:  make(chan passReq, 1),
+		passCh:  make(chan passReq, 4),
 	}
 
 	sm.mu.Lock()
@@ -73,7 +66,7 @@ func (sm *sessionManager) CreateSession() SessionInfoCh {
 	sCtx, cancel := context.WithCancel(sm.appCtx)
 	ls.cancel = cancel
 
-	go ls.Run(sCtx)
+	go ls.run(sCtx)
 
 	return SessionInfoCh{
 		SessionID: sessionID,
@@ -85,13 +78,42 @@ func (sm *sessionManager) CreateSession() SessionInfoCh {
 }
 
 func (sm *sessionManager) SubmitPassword(sessionID, password string) error {
+	sm.mu.Lock()
 	session, ok := sm.sessions[sessionID]
+	sm.mu.Unlock()
 
 	if !ok {
 		return errs.ErrSessionNotFound
 	}
 
+	resp := make(chan error, 1)
+
+	select {
+	case session.passCh <- passReq{
+		password: password,
+		resp:     resp,
+	}:
+	case <-sm.appCtx.Done():
+		return sm.appCtx.Err()
+	}
+
+	select {
+	case err := <-resp:
+		return err
+	case <-sm.appCtx.Done():
+		return sm.appCtx.Err()
+	}
+
 }
 
-func (sm *sessionManager) GetSession()
-func (sm *sessionManager) DeleteSession()
+func (sm *sessionManager) Get(sessionID string) Session {
+	sm.mu.Lock()
+	session, ok := sm.sessions[sessionID]
+	sm.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return session
+}
+
+func (sm *sessionManager) Delete(sessionID string) {}
