@@ -3,6 +3,7 @@ package tgapi
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +33,9 @@ type LiveSession struct {
 	cmdCh   chan commands     // канал для получения команд после авторизации
 	passCh  chan passReq      // канал для получения пароля
 
+	closeCh   chan struct{} // канал для получения сигнала о завершения всех действий
+	closeOnce sync.Once     // чтобы не вызвать панику
+
 	cancel context.CancelFunc // закончить сессию
 
 }
@@ -44,6 +48,29 @@ type passReq struct {
 func (ls *LiveSession) run(ctx context.Context) {
 
 	dispatcher := tg.NewUpdateDispatcher()
+
+	// Подписка на получение сообщений
+	dispatcher.OnNewMessage(func(ctx context.Context, e tg.Entities, update *tg.UpdateNewMessage) error {
+
+		msg, ok := update.Message.(*tg.Message)
+		if !ok {
+			return nil
+		}
+
+		bm := BroadcastMessage{
+			MessageID: int64(msg.ID),
+			Text:      msg.Message,
+			From:      peerToName(e, msg.FromID),
+			Timestamp: time.Unix(int64(msg.Date), 0),
+		}
+
+		if open := ls.hub.Broadcast(bm); !open {
+			return nil
+		}
+
+		return nil
+	})
+
 	cli := telegram.NewClient(ls.appID, ls.appHash, telegram.Options{
 		UpdateHandler:  dispatcher,
 		SessionStorage: ls.storage,
@@ -51,42 +78,32 @@ func (ls *LiveSession) run(ctx context.Context) {
 
 	_ = cli.Run(ctx, func(rctx context.Context) error {
 
-		err := ls.stepGetQr(ctx, cli, dispatcher)
+		err := ls.stepGetQr(rctx, cli, dispatcher)
 		if err != nil {
-			ls.stateCh <- StateNeedPassword
-			err := ls.stepGetPasswordFor2FA(ctx, cli)
+			select {
+			case ls.stateCh <- StateNeedPassword:
+			default:
+			}
+			err := ls.stepGetPasswordFor2FA(rctx, cli)
 			if err != nil {
 				return err
 			}
 		} else {
-			ls.stateCh <- StateAuthSuccessful
+			select {
+			case ls.stateCh <- StateAuthSuccessful:
+			default:
+			}
 		}
-
-		dispatcher.OnNewMessage(func(ctx context.Context, e tg.Entities, update *tg.UpdateNewMessage) error {
-
-			msg, ok := update.Message.(*tg.Message)
-			if !ok {
-				return nil
-			}
-
-			bm := BroadcastMessage{
-				MessageID: int64(msg.ID),
-				Text:      msg.Message,
-				From:      "", // можно резолвить из e.Users/e.Chats по FromID
-				Timestamp: time.Unix(int64(msg.Date), 0),
-			}
-
-			ls.hub.Broadcast(bm)
-			return nil
-		})
 
 		api := cli.API()
 		for {
 			select {
-			case <-ctx.Done():
-				return nil
+			case <-rctx.Done():
+				return rctx.Err()
+			case <-ls.closeCh:
+				return errs.ErrSessionClosed
 			case task := <-ls.cmdCh:
-				task.run(ctx, api)
+				task.run(rctx, api)
 			}
 		}
 
@@ -103,7 +120,10 @@ func (ls *LiveSession) stepGetQr(ctx context.Context, cli *telegram.Client, disp
 			return errs.ErrQrTimeout
 		}
 		tries++
-		ls.qrCh <- token.URL()
+		select {
+		case ls.qrCh <- token.URL():
+		default:
+		}
 		return nil
 	}
 	_, err := cli.QR().Auth(ctx, accept, show)
@@ -113,19 +133,25 @@ func (ls *LiveSession) stepGetQr(ctx context.Context, cli *telegram.Client, disp
 func (ls *LiveSession) stepGetPasswordFor2FA(ctx context.Context, cli *telegram.Client) error {
 	for {
 
-		msg, ok := <-ls.passCh
-		if !ok {
-			return fmt.Errorf("passCh closed")
-		}
+		select {
+		case <-ls.closeCh:
+			return errs.ErrSessionClosed
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg, ok := <-ls.passCh:
+			if !ok {
+				return fmt.Errorf("passCh closed")
+			}
 
-		_, err := cli.Auth().Password(ctx, msg.password)
-		if err != nil {
-			msg.resp <- errs.ErrInvalidPassword
-			continue
-		}
+			_, err := cli.Auth().Password(ctx, msg.password)
+			if err != nil {
+				msg.resp <- errs.ErrInvalidPassword
+				continue
+			}
 
-		msg.resp <- nil
-		return nil
+			msg.resp <- nil
+			return nil
+		}
 
 	}
 }
@@ -143,29 +169,43 @@ func (ls *LiveSession) SendMessage(ctx context.Context, peer, text string) (int6
 	case ls.cmdCh <- cmd:
 	case <-ctx.Done():
 		return -1, ctx.Err()
+	case <-ls.closeCh:
+		return -1, errs.ErrSessionClosed
 	}
 
 	select {
 	case resp := <-respCh:
-		fmt.Println(resp.err)
 		return resp.msgID, resp.err
 	case <-ctx.Done():
 		return -1, ctx.Err()
+	case <-ls.closeCh:
+		return -1, errs.ErrSessionClosed
 	}
 }
 
-func (ls *LiveSession) SubscribeMessages(ctx context.Context) <-chan BroadcastMessage {
+func (ls *LiveSession) SubscribeMessages(ctx context.Context) (<-chan BroadcastMessage, error) {
 	listenerID := uuid.New().String()
 
 	hub := ls.hub
 
-	ch, unsub := hub.Subscribe(listenerID)
+	ch, unsub, success := hub.Subscribe(listenerID)
+	if !success {
+		return nil, errs.ErrSessionBroadcastClosed
+	}
 
 	go func() {
 		<-ctx.Done()
 		unsub()
 	}()
 
-	return ch
+	return ch, nil
 }
-func (ls *LiveSession) Close() error { return nil }
+func (ls *LiveSession) Close() {
+	ls.closeOnce.Do(func() { close(ls.closeCh) })
+
+	if ls.cancel != nil {
+		ls.cancel()
+	}
+
+	ls.hub.Close()
+}

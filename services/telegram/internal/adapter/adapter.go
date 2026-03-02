@@ -152,7 +152,10 @@ func (tsa *TelegramServiceAdapter) SubscribeMessages(in *tsv1.SubscribeMessagesR
 		switch {
 		case errors.Is(err, errs.ErrSessionNotFound):
 			tsa.logger.Error().Err(err).Msg("")
-			return status.Error(codes.NotFound, errs.ErrSessionNotFound.Error())
+			return status.Error(codes.NotFound, err.Error())
+		case errors.Is(err, errs.ErrSessionBroadcastClosed):
+			tsa.logger.Error().Err(err).Msg("")
+			return status.Error(codes.FailedPrecondition, err.Error())
 		default:
 			tsa.logger.Error().Err(err).Msg("")
 			return status.Error(codes.Internal, errs.ErrInternalServer.Error())

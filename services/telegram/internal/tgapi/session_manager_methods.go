@@ -50,7 +50,9 @@ func (sm *sessionManager) CreateSession() SessionInfoCh {
 
 		storage: storage,
 
-		hub: &broadcastHub{subs: make(map[string]chan BroadcastMessage)},
+		hub: &broadcastHub{
+			subs: make(map[string]chan BroadcastMessage),
+		},
 
 		cmdCh:   make(chan commands, 64),
 		qrCh:    make(chan string, 10),
@@ -116,4 +118,13 @@ func (sm *sessionManager) Get(sessionID string) Session {
 	return session
 }
 
-func (sm *sessionManager) Delete(sessionID string) {}
+func (sm *sessionManager) Delete(sessionID string) {
+	sm.mu.Lock()
+	session, ok := sm.sessions[sessionID]
+	if !ok {
+		return
+	}
+	session.Close()
+	delete(sm.sessions, sessionID)
+	sm.mu.Unlock()
+}

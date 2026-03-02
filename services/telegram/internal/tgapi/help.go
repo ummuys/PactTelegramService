@@ -21,17 +21,46 @@ func isPasswordIncorrect(err error) bool {
 		tgerr.Is(err, "PASSWORD_HASH_INVALID")
 }
 
-func peerToString(p tg.PeerClass) string {
+func peerToName(e tg.Entities, p tg.PeerClass) string {
 	if p == nil {
 		return "unknown"
 	}
+
 	switch v := p.(type) {
 	case *tg.PeerUser:
-		return fmt.Sprintf("user:%d", v.UserID)
+		u := e.Users[v.UserID]
+		if u == nil {
+			return fmt.Sprintf("user:%d", v.UserID)
+		}
+		if u.Username != "" {
+			return "@" + u.Username
+		}
+		name := u.FirstName
+		if u.LastName != "" {
+			if name != "" {
+				name += " "
+			}
+			name += u.LastName
+		}
+		if name == "" {
+			return fmt.Sprintf("user:%d", v.UserID)
+		}
+		return name
+
 	case *tg.PeerChat:
+		ch := e.Chats[v.ChatID]
+		if ch != nil {
+			return ch.Title
+		}
 		return fmt.Sprintf("chat:%d", v.ChatID)
+
 	case *tg.PeerChannel:
+		ch := e.Chats[v.ChannelID]
+		if ch != nil {
+			return ch.Title
+		}
 		return fmt.Sprintf("channel:%d", v.ChannelID)
+
 	default:
 		return "unknown"
 	}

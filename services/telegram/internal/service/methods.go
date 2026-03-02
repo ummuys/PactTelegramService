@@ -54,5 +54,5 @@ func (ts *telegramService) SubscribeMessages(ctx context.Context, sessionID stri
 		return nil, errs.ErrSessionNotFound
 	}
 
-	return session.SubscribeMessages(ctx), nil
+	return session.SubscribeMessages(ctx)
 }
