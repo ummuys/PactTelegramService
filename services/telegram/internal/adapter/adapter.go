@@ -7,7 +7,8 @@ import (
 	"github.com/rs/zerolog"
 	tsv1 "github.com/ummuys/pacttelegramservice/api/pb/v1"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/errs"
-	"github.com/ummuys/pacttelegramservice/services/telegram/internal/telegramapi"
+	"github.com/ummuys/pacttelegramservice/services/telegram/internal/service"
+	"github.com/ummuys/pacttelegramservice/services/telegram/internal/tgapi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -17,17 +18,17 @@ import (
 type TelegramServiceAdapter struct {
 	tsv1.UnimplementedTelegramServiceServer
 	logger zerolog.Logger
-	tgAPI  telegramapi.TelegramAPI
+	svc    service.TelegramService
 }
 
-func NewTelegramServiceAdapter(tgAPI telegramapi.TelegramAPI, baseLogger zerolog.Logger) *TelegramServiceAdapter {
+func NewTelegramServiceAdapter(svc service.TelegramService, baseLogger zerolog.Logger) *TelegramServiceAdapter {
 	logger := baseLogger.With().Str("component", "adapter").Logger()
-	return &TelegramServiceAdapter{tgAPI: tgAPI, logger: logger}
+	return &TelegramServiceAdapter{svc: svc, logger: logger}
 }
 
 func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.TelegramService_CreateSessionServer) error {
 	ctx := stream.Context()
-	sessionInfo := tsa.tgAPI.CreateSession()
+	chanels := tsa.svc.CreateSession()
 
 	for {
 		select {
@@ -36,15 +37,15 @@ func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.T
 			return nil
 
 		// QR READY
-		case qr, ok := <-sessionInfo.QrChan:
+		case qr, ok := <-chanels.QrChan:
 			if !ok {
 				tsa.logger.Warn().Msg("qr chanel is closed")
 				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
 			}
-			tsa.sendCreateSessionResponse(stream, sessionInfo.SessionID, qr)
+			tsa.sendCreateSessionResponse(stream, chanels.SessionID, qr)
 
 		// ERR READY
-		case err, ok := <-sessionInfo.ErrChan:
+		case err, ok := <-chanels.ErrChan:
 			if !ok {
 				tsa.logger.Warn().Msg("err chanel is closed")
 				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
@@ -60,13 +61,13 @@ func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.T
 			}
 
 		// SESSION SIGNAL READY
-		case state, ok := <-sessionInfo.StateChan:
+		case state, ok := <-chanels.StateChan:
 			if !ok {
 				tsa.logger.Warn().Msg("status chanel is closed")
 				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
 			}
 			switch state {
-			case telegramapi.StateNeedPassword:
+			case tgapi.StateNeedPassword:
 				tsa.sendCreateSessionState(stream, tsv1.SessionStatus_SESSION_STATUS_PASSWORD_NEEDED, "you need to use SubmitPassword, because you have 2FA")
 				return nil
 			}

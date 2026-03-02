@@ -1,20 +1,18 @@
-package telegramapi
+package tgapi
 
 import (
-	"context"
 	"sync"
 	"time"
 )
 
 type broadcastManager struct {
 	mu       sync.RWMutex
-	sessions map[string]*broadcastHub // session id -> hub of listeners
+	sessions map[string]*broadcastHub // айди сессии возвращает комнату слушателей
 }
 
 type broadcastHub struct {
-	cancel context.CancelFunc
 	mu     sync.RWMutex
-	subs   map[string]chan BroadcastMessage // listener id -> listener chanel
+	subs   map[string]chan BroadcastMessage // айди слушателя возвращает канал слушателя
 	closed bool
 }
 
@@ -31,7 +29,7 @@ func newBroadcastManager() *broadcastManager {
 	}
 }
 
-func (bm *broadcastManager) CreateHub(sessionID string, cancel context.CancelFunc) *broadcastHub {
+func (bm *broadcastManager) CreateHub(sessionID string) *broadcastHub {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
@@ -40,8 +38,7 @@ func (bm *broadcastManager) CreateHub(sessionID string, cancel context.CancelFun
 	}
 
 	hub := &broadcastHub{
-		cancel: cancel,
-		subs:   make(map[string]chan BroadcastMessage),
+		subs: make(map[string]chan BroadcastMessage),
 	}
 	bm.sessions[sessionID] = hub
 	return hub
@@ -121,9 +118,6 @@ func (h *broadcastHub) Broadcast(msg BroadcastMessage) bool {
 }
 
 func (h *broadcastHub) Close() {
-	if h.cancel != nil {
-		h.cancel()
-	}
 
 	h.mu.Lock()
 	if h.closed {

@@ -1,4 +1,4 @@
-package telegramapi
+package tgapi
 
 type SessionState int
 
