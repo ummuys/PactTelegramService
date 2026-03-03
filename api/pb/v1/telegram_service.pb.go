@@ -7,13 +7,14 @@
 package telegramservicev1
 
 import (
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
+
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
 )
 
 const (
@@ -728,23 +729,26 @@ func file_v1_telegram_service_proto_rawDescGZIP() []byte {
 	return file_v1_telegram_service_proto_rawDescData
 }
 
-var file_v1_telegram_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_v1_telegram_service_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
-var file_v1_telegram_service_proto_goTypes = []any{
-	(SessionStatus)(0),               // 0: pact.telegram.v1.SessionStatus
-	(*SessionState)(nil),             // 1: pact.telegram.v1.SessionState
-	(*CreateSessionEvent)(nil),       // 2: pact.telegram.v1.CreateSessionEvent
-	(*CreateSessionResponse)(nil),    // 3: pact.telegram.v1.CreateSessionResponse
-	(*SubmitPasswordRequest)(nil),    // 4: pact.telegram.v1.SubmitPasswordRequest
-	(*SubmitPasswordEvent)(nil),      // 5: pact.telegram.v1.SubmitPasswordEvent
-	(*DeleteSessionRequest)(nil),     // 6: pact.telegram.v1.DeleteSessionRequest
-	(*SendMessageRequest)(nil),       // 7: pact.telegram.v1.SendMessageRequest
-	(*SendMessageResponse)(nil),      // 8: pact.telegram.v1.SendMessageResponse
-	(*SubscribeMessagesRequest)(nil), // 9: pact.telegram.v1.SubscribeMessagesRequest
-	(*MessageUpdate)(nil),            // 10: pact.telegram.v1.MessageUpdate
-	(*emptypb.Empty)(nil),            // 11: google.protobuf.Empty
-	(*timestamppb.Timestamp)(nil),    // 12: google.protobuf.Timestamp
-}
+var (
+	file_v1_telegram_service_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+	file_v1_telegram_service_proto_msgTypes  = make([]protoimpl.MessageInfo, 10)
+	file_v1_telegram_service_proto_goTypes   = []any{
+		(SessionStatus)(0),               // 0: pact.telegram.v1.SessionStatus
+		(*SessionState)(nil),             // 1: pact.telegram.v1.SessionState
+		(*CreateSessionEvent)(nil),       // 2: pact.telegram.v1.CreateSessionEvent
+		(*CreateSessionResponse)(nil),    // 3: pact.telegram.v1.CreateSessionResponse
+		(*SubmitPasswordRequest)(nil),    // 4: pact.telegram.v1.SubmitPasswordRequest
+		(*SubmitPasswordEvent)(nil),      // 5: pact.telegram.v1.SubmitPasswordEvent
+		(*DeleteSessionRequest)(nil),     // 6: pact.telegram.v1.DeleteSessionRequest
+		(*SendMessageRequest)(nil),       // 7: pact.telegram.v1.SendMessageRequest
+		(*SendMessageResponse)(nil),      // 8: pact.telegram.v1.SendMessageResponse
+		(*SubscribeMessagesRequest)(nil), // 9: pact.telegram.v1.SubscribeMessagesRequest
+		(*MessageUpdate)(nil),            // 10: pact.telegram.v1.MessageUpdate
+		(*emptypb.Empty)(nil),            // 11: google.protobuf.Empty
+		(*timestamppb.Timestamp)(nil),    // 12: google.protobuf.Timestamp
+	}
+)
+
 var file_v1_telegram_service_proto_depIdxs = []int32{
 	0,  // 0: pact.telegram.v1.SessionState.status:type_name -> pact.telegram.v1.SessionStatus
 	3,  // 1: pact.telegram.v1.CreateSessionEvent.session_response:type_name -> pact.telegram.v1.CreateSessionResponse

@@ -33,7 +33,9 @@ func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.T
 	tsa.logger.Info().Str("session_id", ch.SessionID).Msg("create session stream started")
 	defer tsa.logger.Info().Str("session_id", ch.SessionID).Msg("create session stream finished")
 
-	cleanup := func() { tsa.svc.DeleteSession(ch.SessionID) }
+	cleanup := func() {
+		_ = tsa.svc.DeleteSession(ch.SessionID)
+	}
 
 	fail := func(level string, err error, msg string, grpcErr error) error {
 		tsa.logErr(level, err, msg, func(e *zerolog.Event) *zerolog.Event {

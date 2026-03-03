@@ -13,7 +13,6 @@ type TelegramServiceConfig struct {
 }
 
 func ParseTelegramServiceConfig() (TelegramServiceConfig, error) {
-
 	var errs []string
 	add := func(err error) {
 		if err != nil {

@@ -1,0 +1,6 @@
+#!/bin/sh
+
+set -e
+
+echo "Running golangci-lint..."
+golangci-lint  run ./...

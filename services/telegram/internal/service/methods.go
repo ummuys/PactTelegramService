@@ -30,7 +30,6 @@ func (ts *telegramService) SubmitPassword(sessionID, password string) error {
 }
 
 func (ts *telegramService) SendMessage(ctx context.Context, sessionID, peer, txt string) (int64, error) {
-
 	session := ts.sessionManager.Get(sessionID)
 	if session == nil {
 		return -1, errs.ErrSessionNotFound
@@ -45,7 +44,6 @@ func (ts *telegramService) SendMessage(ctx context.Context, sessionID, peer, txt
 }
 
 func (ts *telegramService) SubscribeMessages(ctx context.Context, sessionID string) (<-chan tgapi.BroadcastMessage, error) {
-
 	session := ts.sessionManager.Get(sessionID)
 	if session == nil {
 		return nil, errs.ErrSessionNotFound

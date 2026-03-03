@@ -1,2 +1,11 @@
-
 services:
+  telegram-service:
+    container_name: pact-telegram-service
+    build:
+      context: ./..
+      dockerfile: ./deployment/Dockerfile
+    env_file:
+      - ../services/telegram/.env
+    ports:
+      - "50051:50051"
+    restart: unless-stopped

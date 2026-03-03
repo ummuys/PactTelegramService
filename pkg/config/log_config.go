@@ -8,7 +8,6 @@ import (
 )
 
 func ParseLogLevel(nameConf string) (zerolog.Level, error) {
-
 	lvl, err := validateLevel(nameConf)
 	if err != nil {
 		return 0, err

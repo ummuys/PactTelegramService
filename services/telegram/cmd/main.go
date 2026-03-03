@@ -8,7 +8,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/joho/godotenv"
 	tsv1 "github.com/ummuys/pacttelegramservice/api/pb/v1"
 	"github.com/ummuys/pacttelegramservice/pkg/config"
 	"github.com/ummuys/pacttelegramservice/pkg/logger"
@@ -30,10 +29,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	err := godotenv.Load("../.env")
-	if err != nil {
-		log.Fatal(err)
-	}
+	// Если запускаете не через docker, то сними комментарии с участка ниже
+
+	// err := godotenv.Load("../.env")
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
 	logs, err := logger.InitLogger("report", "LOG_LEVEL_TELEGRAM_SERVICE")
 	if err != nil {
@@ -97,5 +98,4 @@ func main() {
 	} else {
 		logs.Info().Msg("graceful shutdown completed")
 	}
-
 }

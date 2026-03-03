@@ -38,7 +38,6 @@ type LiveSession struct {
 	closeOnce sync.Once     // чтобы не вызвать панику
 
 	cancel context.CancelFunc // закончить сессию (тут храниться cancel функция того ctx, который передается в функцию run)
-
 }
 
 type passReq struct {
@@ -61,7 +60,6 @@ func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
 
 	// Подписка на получение сообщений
 	dispatcher.OnNewMessage(func(ctx context.Context, e tg.Entities, update *tg.UpdateNewMessage) error {
-
 		msg, ok := update.Message.(*tg.Message)
 		if !ok {
 			return nil
@@ -105,7 +103,6 @@ func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
 	}()
 
 	err := cli.Run(ctx, func(rctx context.Context) error {
-
 		if err := ls.stepGetQr(authCtx, cli, dispatcher); err != nil {
 			gerr := parseGotdError(err)
 
@@ -183,7 +180,6 @@ func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
 				task.run(rctx, api)
 			}
 		}
-
 	})
 
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errs.ErrSessionClosed) {
@@ -196,7 +192,6 @@ func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
 			Str("session_id", ls.sessionID).
 			Msg("telegram client run exited")
 	}
-
 }
 
 func (ls *LiveSession) stepGetQr(ctx context.Context, cli *telegram.Client, dispatcher tg.UpdateDispatcher) error {
@@ -248,7 +243,6 @@ func (ls *LiveSession) stepGetQr(ctx context.Context, cli *telegram.Client, disp
 
 func (ls *LiveSession) stepGetPasswordFor2FA(ctx context.Context, cli *telegram.Client) error {
 	for {
-
 		select {
 		case <-ls.closeCh:
 			return errs.ErrSessionClosed
@@ -274,12 +268,10 @@ func (ls *LiveSession) stepGetPasswordFor2FA(ctx context.Context, cli *telegram.
 			}
 			return nil
 		}
-
 	}
 }
 
 func (ls *LiveSession) SendMessage(ctx context.Context, peer, text string) (int64, error) {
-
 	respCh := make(chan sendMsgResp, 1)
 	cmd := sendMessage{
 		peer: peer,
@@ -321,7 +313,6 @@ func (ls *LiveSession) SubscribeMessages(ctx context.Context) <-chan BroadcastMe
 }
 
 func (ls *LiveSession) close() {
-
 	d := &disconnect{errCh: make(chan error, 1)}
 	ls.cmdCh <- d
 	err := <-d.errCh

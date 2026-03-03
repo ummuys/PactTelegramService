@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/unpack"
 	"github.com/gotd/td/tg"
 )
 
@@ -27,9 +28,10 @@ type sendMsgResp struct {
 
 func (sm sendMessage) run(rctx context.Context, api *tg.Client) {
 	s := message.NewSender(api)
-	_, err := s.Resolve(sm.peer).Text(rctx, sm.text)
 
-	resp := sendMsgResp{msgID: 0, err: err}
+	msgID, err := unpack.MessageID(s.Resolve(sm.peer).Text(rctx, sm.text))
+
+	resp := sendMsgResp{msgID: int64(msgID), err: err}
 
 	select {
 	case sm.ch <- resp:

@@ -20,7 +20,6 @@ func (tsa *TelegramServiceAdapter) sendCreateSessionState(stream tsv1.TelegramSe
 			},
 		},
 	})
-
 	if err != nil {
 		tsa.logger.Error().Err(err).Msg("can't send session state")
 		return err
@@ -38,7 +37,6 @@ func (tsa *TelegramServiceAdapter) sendCreateSessionResponse(stream tsv1.Telegra
 			},
 		},
 	})
-
 	if err != nil {
 		tsa.logger.Error().Err(err).Msg("can't send session response")
 		return err

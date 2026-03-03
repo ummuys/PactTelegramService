@@ -8,6 +8,7 @@ package telegramservicev1
 
 import (
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -136,15 +137,19 @@ type UnimplementedTelegramServiceServer struct{}
 func (UnimplementedTelegramServiceServer) CreateSession(*emptypb.Empty, grpc.ServerStreamingServer[CreateSessionEvent]) error {
 	return status.Error(codes.Unimplemented, "method CreateSession not implemented")
 }
+
 func (UnimplementedTelegramServiceServer) SubmitPassword(context.Context, *SubmitPasswordRequest) (*SubmitPasswordEvent, error) {
 	return nil, status.Error(codes.Unimplemented, "method SubmitPassword not implemented")
 }
+
 func (UnimplementedTelegramServiceServer) DeleteSession(context.Context, *DeleteSessionRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteSession not implemented")
 }
+
 func (UnimplementedTelegramServiceServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
 }
+
 func (UnimplementedTelegramServiceServer) SubscribeMessages(*SubscribeMessagesRequest, grpc.ServerStreamingServer[MessageUpdate]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeMessages not implemented")
 }

@@ -30,7 +30,6 @@ func NewSessionManager(ctx context.Context, appID int, appHash string, baseLogge
 		sessions: make(map[string]*LiveSession),
 		logger:   logger,
 	}
-
 }
 
 func (sm *sessionManager) CreateSession(authCtx context.Context) SessionInfoCh {
@@ -40,7 +39,6 @@ func (sm *sessionManager) CreateSession(authCtx context.Context) SessionInfoCh {
 	hub.Start()
 
 	ls := &LiveSession{
-
 		sessionID: sessionID,
 		appID:     sm.appID,
 		appHash:   sm.appHash,
@@ -73,7 +71,6 @@ func (sm *sessionManager) CreateSession(authCtx context.Context) SessionInfoCh {
 		ErrChan:   ls.errCh,
 		StateChan: ls.stateCh,
 	}
-
 }
 
 func (sm *sessionManager) SubmitPassword(sessionID, password string) error {
@@ -109,7 +106,6 @@ func (sm *sessionManager) SubmitPassword(sessionID, password string) error {
 	case <-session.closeCh:
 		return errs.ErrSessionClosed
 	}
-
 }
 
 func (sm *sessionManager) Get(sessionID string) Session {
