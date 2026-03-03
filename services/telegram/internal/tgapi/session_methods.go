@@ -74,6 +74,12 @@ func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
 			Timestamp: time.Unix(int64(msg.Date), 0),
 		}
 
+		select {
+		case <-ls.closeCh:
+			return nil
+		default:
+		}
+
 		ls.hub.Broadcast(bm)
 
 		return nil
@@ -87,12 +93,20 @@ func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
 
 	go func() {
 		<-ctx.Done()
-		ls.close()
+		timer := time.NewTimer(15 * time.Second)
+		defer timer.Stop()
+
+		select {
+		case <-ls.closeCh:
+			return
+		case <-timer.C:
+			ls.close()
+		}
 	}()
 
 	err := cli.Run(ctx, func(rctx context.Context) error {
 
-		if err := ls.stepGetQr(rctx, authCtx, cli, dispatcher); err != nil {
+		if err := ls.stepGetQr(authCtx, cli, dispatcher); err != nil {
 			gerr := parseGotdError(err)
 
 			ls.logger.Warn().
@@ -165,25 +179,41 @@ func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
 						Msg("cmd channel closed")
 					return errs.ErrSessionClosed
 				}
+
 				task.run(rctx, api)
 			}
 		}
 
 	})
 
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, errs.ErrSessionClosed) {
 		ls.logger.Error().
 			Str("session_id", ls.sessionID).
 			Err(err).
 			Msg("telegram client run exited with error")
+	} else {
+		ls.logger.Info().
+			Str("session_id", ls.sessionID).
+			Msg("telegram client run exited")
 	}
 
 }
 
-func (ls *LiveSession) stepGetQr(appCtx context.Context, ctx context.Context, cli *telegram.Client, dispatcher tg.UpdateDispatcher) error {
+func (ls *LiveSession) stepGetQr(ctx context.Context, cli *telegram.Client, dispatcher tg.UpdateDispatcher) error {
 	tries := 0
 	attempt := 10
 	accept := qrlogin.OnLoginToken(dispatcher)
+
+	authStepCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		select {
+		case <-ls.closeCh:
+			cancel()
+		case <-authStepCtx.Done():
+		}
+	}()
 
 	errCh := make(chan error, 1)
 
@@ -193,6 +223,8 @@ func (ls *LiveSession) stepGetQr(appCtx context.Context, ctx context.Context, cl
 		}
 		tries++
 		select {
+		case <-ls.closeCh:
+			return errs.ErrSessionClosed
 		case ls.qrCh <- token.URL():
 		default:
 		}
@@ -200,7 +232,7 @@ func (ls *LiveSession) stepGetQr(appCtx context.Context, ctx context.Context, cl
 	}
 
 	go func() {
-		_, err := cli.QR().Auth(ctx, accept, show)
+		_, err := cli.QR().Auth(authStepCtx, accept, show)
 		errCh <- err
 	}()
 
@@ -209,8 +241,9 @@ func (ls *LiveSession) stepGetQr(appCtx context.Context, ctx context.Context, cl
 		return aerr
 	case <-ls.closeCh:
 		return errs.ErrSessionClosed
+	case <-authStepCtx.Done():
+		return authStepCtx.Err()
 	}
-
 }
 
 func (ls *LiveSession) stepGetPasswordFor2FA(ctx context.Context, cli *telegram.Client) error {
@@ -286,7 +319,18 @@ func (ls *LiveSession) SubscribeMessages(ctx context.Context) <-chan BroadcastMe
 
 	return ch
 }
+
 func (ls *LiveSession) close() {
+
+	d := &disconnect{errCh: make(chan error, 1)}
+	ls.cmdCh <- d
+	err := <-d.errCh
+	if err != nil {
+		ls.logger.Warn().
+			Str("session_id", ls.sessionID).
+			Msg("session disconnected with err")
+	}
+
 	ls.closeOnce.Do(func() { close(ls.closeCh) })
 
 	if ls.cancel != nil {
@@ -295,6 +339,11 @@ func (ls *LiveSession) close() {
 
 	ls.hub.Close()
 
-	// ждем, когда всех отключат
-	<-ls.hub.Done()
+	select {
+	case <-ls.hub.Done():
+	case <-time.After(time.Second * 5):
+		ls.logger.Warn().
+			Str("session_id", ls.sessionID).
+			Msg("hub did not stop within timeout")
+	}
 }

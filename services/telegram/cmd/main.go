@@ -73,7 +73,7 @@ func main() {
 	})
 
 	wg.Go(func() {
-		logs.Info().Msg("Telegram service is running")
+		logs.Info().Msg("telegram service is running")
 		if err := srv.Serve(lis); err != nil {
 			errCh <- errMsg{
 				err:  err,
@@ -93,9 +93,9 @@ func main() {
 	}
 
 	if haveErrs {
-		logs.Info().Msg("Shutdown completed with errors")
+		logs.Info().Msg("shutdown completed with errors")
 	} else {
-		logs.Info().Msg("Graceful shutdown completed")
+		logs.Info().Msg("graceful shutdown completed")
 	}
 
 }

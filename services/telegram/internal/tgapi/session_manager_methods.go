@@ -2,7 +2,6 @@ package tgapi
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
@@ -135,7 +134,5 @@ func (sm *sessionManager) Delete(sessionID string) error {
 
 	session.close()
 
-	fmt.Println("session to delete ->", sessionID)
-	fmt.Println("all session ->", sm.sessions)
 	return nil
 }
