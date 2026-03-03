@@ -3,7 +3,6 @@ package adapter
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/rs/zerolog"
 	tsv1 "github.com/ummuys/pacttelegramservice/api/pb/v1"
@@ -29,150 +28,207 @@ func NewTelegramServiceAdapter(svc service.TelegramService, baseLogger zerolog.L
 
 func (tsa *TelegramServiceAdapter) CreateSession(_ *emptypb.Empty, stream tsv1.TelegramService_CreateSessionServer) error {
 	ctx := stream.Context()
-	chanels := tsa.svc.CreateSession()
+	ch := tsa.svc.CreateSession(ctx)
+
+	tsa.logger.Info().Str("session_id", ch.SessionID).Msg("create session stream started")
+	defer tsa.logger.Info().Str("session_id", ch.SessionID).Msg("create session stream finished")
+
+	cleanup := func() { tsa.svc.DeleteSession(ch.SessionID) }
+
+	fail := func(level string, err error, msg string, grpcErr error) error {
+		tsa.logErr(level, err, msg, func(e *zerolog.Event) *zerolog.Event {
+			return e.Str("session_id", ch.SessionID)
+		})
+		cleanup()
+		return grpcErr
+	}
 
 	for {
 		select {
-		// CTX SIGNAL
 		case <-ctx.Done():
-			return nil
+			cleanup()
+			return status.FromContextError(ctx.Err()).Err()
 
-		// QR READY
-		case qr, ok := <-chanels.QrChan:
+		case qr, ok := <-ch.QrChan:
 			if !ok {
-				tsa.logger.Warn().Msg("qr chanel is closed")
+				if ctx.Err() != nil {
+					cleanup()
+					return status.FromContextError(ctx.Err()).Err()
+				}
+				cleanup()
 				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
 			}
-			tsa.sendCreateSessionResponse(stream, chanels.SessionID, qr)
+			if err := tsa.sendCreateSessionResponse(stream, ch.SessionID, qr); err != nil {
+				cleanup()
+				return fail("warn", err, "stream send qr failed", grpcStatusFromError(err))
+			}
 
-		// ERR READY
-		case err, ok := <-chanels.ErrChan:
+		case state, ok := <-ch.StateChan:
 			if !ok {
-				tsa.logger.Warn().Msg("err chanel is closed")
+				if ctx.Err() != nil {
+					cleanup()
+					return status.FromContextError(ctx.Err()).Err()
+				}
+				cleanup()
 				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
 			}
 
-			tsa.logger.Warn().Err(err).Msg("")
-			return status.Error(codes.Internal, errs.ErrInternalServer.Error())
-
-		// SESSION SIGNAL READY
-		case state, ok := <-chanels.StateChan:
-			if !ok {
-				tsa.logger.Warn().Msg("status chanel is closed")
-				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
-			}
 			switch state {
 			case tgapi.StateNeedPassword:
-				tsa.sendCreateSessionState(stream, tsv1.SessionStatus_SESSION_STATUS_PASSWORD_NEEDED, "you need to use SubmitPassword, because you have 2FA")
+				if err := tsa.sendCreateSessionState(stream,
+					tsv1.SessionStatus_SESSION_STATUS_PASSWORD_NEEDED,
+					"2FA enabled: call SubmitPassword with session_id and password",
+				); err != nil {
+					return fail("warn", err, "stream send state failed", grpcStatusFromError(err))
+				}
 				return nil
-			case tgapi.StateAuthSuccessful:
-				tsa.sendCreateSessionState(stream, tsv1.SessionStatus_SESSION_STATUS_AUTHORIZED, "auth successful")
-				return nil
-			}
-		}
 
+			case tgapi.StateAuthSuccessful:
+				if err := tsa.sendCreateSessionState(stream,
+					tsv1.SessionStatus_SESSION_STATUS_AUTHORIZED,
+					"authorized",
+				); err != nil {
+					return fail("warn", err, "stream send state failed", grpcStatusFromError(err))
+				}
+				return nil
+
+			default:
+				cleanup()
+				return status.Error(codes.Internal, errs.ErrUnknownClientEvent.Error())
+			}
+
+		case err, ok := <-ch.ErrChan:
+			if !ok {
+				if ctx.Err() != nil {
+					cleanup()
+					return status.FromContextError(ctx.Err()).Err()
+				}
+				cleanup()
+				return status.Error(codes.Internal, errs.ErrInternalServer.Error())
+			}
+			return fail("warn", err, "create session error", grpcStatusFromError(err))
+		}
 	}
 }
 
 func (tsa *TelegramServiceAdapter) SubmitPassword(ctx context.Context, in *tsv1.SubmitPasswordRequest) (*tsv1.SubmitPasswordEvent, error) {
-
-	if err := tsa.svc.SubmitPassword(in.SessionId, in.Password); err != nil {
-		fmt.Println(err)
-		switch {
-		case errors.Is(err, errs.ErrInvalidPassword):
-			return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
+	err := tsa.svc.SubmitPassword(in.SessionId, in.Password)
+	if err == nil {
+		return &tsv1.SubmitPasswordEvent{
+			Event: &tsv1.SubmitPasswordEvent_SessionState{
 				SessionState: &tsv1.SessionState{
-					Status:  tsv1.SessionStatus_SESSION_STATUS_UNAUTHENTICATED,
-					Message: err.Error(),
+					Status:  tsv1.SessionStatus_SESSION_STATUS_AUTHORIZED,
+					Message: "authorized",
 				},
-			}}, nil
-
-		case errors.Is(err, errs.ErrSessionNotFound):
-			return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
-				SessionState: &tsv1.SessionState{
-					Status:  tsv1.SessionStatus_SESSION_STATUS_SESSION_NOT_FOUND,
-					Message: err.Error(),
-				},
-			}}, nil
-
-		case errors.Is(err, context.Canceled):
-			return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
-				SessionState: &tsv1.SessionState{
-					Status:  tsv1.SessionStatus_SESSION_STATUS_DEADLINE_EXCEEDED,
-					Message: "session is dead, read qr again",
-				},
-			}}, nil
-
-		default:
-			tsa.logger.Error().Err(err).Msg("")
-			return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_Empty{}}, status.Error(codes.Internal, errs.ErrInternalServer.Error())
-		}
+			},
+		}, nil
 	}
-	return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
-		SessionState: &tsv1.SessionState{
-			Status:  tsv1.SessionStatus_SESSION_STATUS_AUTHORIZED,
-			Message: "auth succsessful",
-		},
-	}}, nil
+
+	tsa.logErr("warn", err, "submit password failed",
+		func(e *zerolog.Event) *zerolog.Event { return e.Str("session_id", in.SessionId) },
+	)
+
+	switch {
+	case errors.Is(err, errs.ErrInvalidPassword):
+		return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
+			SessionState: &tsv1.SessionState{
+				Status:  tsv1.SessionStatus_SESSION_STATUS_UNAUTHENTICATED,
+				Message: err.Error(),
+			},
+		}}, nil
+
+	case errors.Is(err, errs.ErrSessionNotFound):
+		return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
+			SessionState: &tsv1.SessionState{
+				Status:  tsv1.SessionStatus_SESSION_STATUS_SESSION_NOT_FOUND,
+				Message: err.Error(),
+			},
+		}}, nil
+
+	case errors.Is(err, errs.ErrQrTimeout), errors.Is(err, context.DeadlineExceeded):
+		return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
+			SessionState: &tsv1.SessionState{
+				Status:  tsv1.SessionStatus_SESSION_STATUS_DEADLINE_EXCEEDED,
+				Message: "session expired, read QR again",
+			},
+		}}, nil
+
+	case errors.Is(err, errs.ErrSessionClosed), errors.Is(err, context.Canceled):
+		return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_SessionState{
+			SessionState: &tsv1.SessionState{
+				Status:  tsv1.SessionStatus_SESSION_STATUS_UNAUTHENTICATED,
+				Message: "session closed",
+			},
+		}}, nil
+
+	default:
+
+		return &tsv1.SubmitPasswordEvent{Event: &tsv1.SubmitPasswordEvent_Empty{}},
+			status.Error(codes.Internal, errs.ErrInternalServer.Error())
+	}
 }
 
-// func (tsa *TelegramServiceAdapter) DeleteSession(ctx context.Context, in *tsv1.DeleteSessionRequest) (*emptypb.Empty, error) {
-// 	if err := tsa.tgAPI.DeleteSession(in.SessionId, ctx); err != nil {
-// 		switch {
-// 		case errors.Is(err, errs.ErrSessionNotFound):
-// 			tsa.logger.Error().Err(err).Msg("")
-// 			return &emptypb.Empty{}, status.Error(codes.NotFound, errs.ErrSessionNotFound.Error())
-// 		default:
-// 			tsa.logger.Error().Err(err).Msg("")
-// 			return &emptypb.Empty{}, status.Error(codes.Internal, errs.ErrInternalServer.Error())
-// 		}
-// 	}
-// 	return &emptypb.Empty{}, nil
-// }
+func (tsa *TelegramServiceAdapter) DeleteSession(ctx context.Context, in *tsv1.DeleteSessionRequest) (*emptypb.Empty, error) {
+	if err := tsa.svc.DeleteSession(in.SessionId); err != nil {
+		tsa.logErr("warn", err, "delete session failed",
+			func(e *zerolog.Event) *zerolog.Event { return e.Str("session_id", in.SessionId) },
+		)
+		return nil, grpcStatusFromError(err)
+	}
+	return &emptypb.Empty{}, nil
+}
 
 func (tsa *TelegramServiceAdapter) SendMessage(ctx context.Context, in *tsv1.SendMessageRequest) (*tsv1.SendMessageResponse, error) {
 	id, err := tsa.svc.SendMessage(ctx, in.SessionId, in.Peer, in.Text)
 	if err != nil {
-		switch {
-		case errors.Is(err, errs.ErrSessionNotFound):
-			tsa.logger.Error().Err(err).Msg("")
-			return &tsv1.SendMessageResponse{}, status.Error(codes.NotFound, errs.ErrSessionNotFound.Error())
-		default:
-			tsa.logger.Error().Err(err).Msg("")
-			return &tsv1.SendMessageResponse{}, status.Error(codes.Internal, errs.ErrInternalServer.Error())
-		}
+		tsa.logErr("warn", err, "send message failed",
+			func(e *zerolog.Event) *zerolog.Event { return e.Str("session_id", in.SessionId) },
+		)
+		return nil, grpcStatusFromError(err)
 	}
 	return &tsv1.SendMessageResponse{MessageId: id}, nil
 }
 
 func (tsa *TelegramServiceAdapter) SubscribeMessages(in *tsv1.SubscribeMessagesRequest, stream tsv1.TelegramService_SubscribeMessagesServer) error {
 	ctx := stream.Context()
+
 	ch, err := tsa.svc.SubscribeMessages(ctx, in.SessionId)
 	if err != nil {
-		switch {
-		case errors.Is(err, errs.ErrSessionNotFound):
-			tsa.logger.Error().Err(err).Msg("")
-			return status.Error(codes.NotFound, err.Error())
-		case errors.Is(err, errs.ErrSessionBroadcastClosed):
-			tsa.logger.Error().Err(err).Msg("")
-			return status.Error(codes.FailedPrecondition, err.Error())
-		default:
-			tsa.logger.Error().Err(err).Msg("")
-			return status.Error(codes.Internal, errs.ErrInternalServer.Error())
-		}
+		tsa.logErr("warn", err, "subscribe messages failed",
+			func(e *zerolog.Event) *zerolog.Event { return e.Str("session_id", in.SessionId) },
+		)
+		return grpcStatusFromError(err)
 	}
+
+	tsa.logger.Info().
+		Str("session_id", in.SessionId).
+		Msg("subscribe messages stream started")
+
+	defer tsa.logger.Info().
+		Str("session_id", in.SessionId).
+		Msg("subscribe messages stream finished")
 
 	for {
 		select {
-		case msg := <-ch:
-			stream.Send(&tsv1.MessageUpdate{
+		case <-ctx.Done():
+			return nil
+
+		case msg, ok := <-ch:
+			if !ok {
+				return nil
+			}
+
+			if err := stream.Send(&tsv1.MessageUpdate{
 				MessageId: msg.MessageID,
 				Text:      msg.Text,
 				From:      msg.From,
 				Timestamp: timestamppb.New(msg.Timestamp),
-			})
-		case <-ctx.Done():
-			return nil
+			}); err != nil {
+				tsa.logErr("warn", err, "stream send message update failed",
+					func(e *zerolog.Event) *zerolog.Event { return e.Str("session_id", in.SessionId) },
+				)
+				return grpcStatusFromError(err)
+			}
 		}
 	}
 }

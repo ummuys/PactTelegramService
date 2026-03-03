@@ -2,13 +2,13 @@ package tgapi
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
 	"github.com/gotd/td/session"
 	"github.com/rs/zerolog"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/errs"
-	"github.com/ummuys/pacttelegramservice/services/telegram/internal/repository"
 )
 
 type sessionManager struct {
@@ -19,8 +19,6 @@ type sessionManager struct {
 	sessions map[string]*LiveSession
 	mu       sync.RWMutex
 	logger   zerolog.Logger
-
-	repository repository.SessionRepository
 }
 
 func NewSessionManager(ctx context.Context, appID int, appHash string, baseLogger zerolog.Logger) SessionManager {
@@ -36,10 +34,11 @@ func NewSessionManager(ctx context.Context, appID int, appHash string, baseLogge
 
 }
 
-func (sm *sessionManager) CreateSession() SessionInfoCh {
+func (sm *sessionManager) CreateSession(authCtx context.Context) SessionInfoCh {
 	sessionID := uuid.New().String()
 
-	storage := new(session.StorageMemory)
+	hub := newBroadcastHub()
+	hub.Start()
 
 	ls := &LiveSession{
 
@@ -48,17 +47,16 @@ func (sm *sessionManager) CreateSession() SessionInfoCh {
 		appHash:   sm.appHash,
 		logger:    sm.logger.With().Str("session_id", sessionID).Logger(),
 
-		storage: storage,
+		storage: new(session.StorageMemory),
 
-		hub: &broadcastHub{
-			subs: make(map[string]chan BroadcastMessage),
-		},
+		hub: hub,
 
 		cmdCh:   make(chan commands, 64),
 		qrCh:    make(chan string, 10),
 		stateCh: make(chan SessionState, 10),
 		errCh:   make(chan error, 1),
 		passCh:  make(chan passReq, 4),
+		closeCh: make(chan struct{}),
 	}
 
 	sm.mu.Lock()
@@ -68,7 +66,7 @@ func (sm *sessionManager) CreateSession() SessionInfoCh {
 	sCtx, cancel := context.WithCancel(sm.appCtx)
 	ls.cancel = cancel
 
-	go ls.run(sCtx)
+	go ls.run(sCtx, authCtx)
 
 	return SessionInfoCh{
 		SessionID: sessionID,
@@ -80,9 +78,9 @@ func (sm *sessionManager) CreateSession() SessionInfoCh {
 }
 
 func (sm *sessionManager) SubmitPassword(sessionID, password string) error {
-	sm.mu.Lock()
+	sm.mu.RLock()
 	session, ok := sm.sessions[sessionID]
-	sm.mu.Unlock()
+	sm.mu.RUnlock()
 
 	if !ok {
 		return errs.ErrSessionNotFound
@@ -91,12 +89,17 @@ func (sm *sessionManager) SubmitPassword(sessionID, password string) error {
 	resp := make(chan error, 1)
 
 	select {
+
 	case session.passCh <- passReq{
 		password: password,
 		resp:     resp,
 	}:
+
 	case <-sm.appCtx.Done():
 		return sm.appCtx.Err()
+
+	case <-session.closeCh:
+		return errs.ErrSessionClosed
 	}
 
 	select {
@@ -104,27 +107,35 @@ func (sm *sessionManager) SubmitPassword(sessionID, password string) error {
 		return err
 	case <-sm.appCtx.Done():
 		return sm.appCtx.Err()
+	case <-session.closeCh:
+		return errs.ErrSessionClosed
 	}
 
 }
 
 func (sm *sessionManager) Get(sessionID string) Session {
-	sm.mu.Lock()
+	sm.mu.RLock()
 	session, ok := sm.sessions[sessionID]
-	sm.mu.Unlock()
+	sm.mu.RUnlock()
 	if !ok {
 		return nil
 	}
 	return session
 }
 
-func (sm *sessionManager) Delete(sessionID string) {
+func (sm *sessionManager) Delete(sessionID string) error {
 	sm.mu.Lock()
 	session, ok := sm.sessions[sessionID]
 	if !ok {
-		return
+		sm.mu.Unlock()
+		return errs.ErrSessionNotFound
 	}
-	session.Close()
 	delete(sm.sessions, sessionID)
 	sm.mu.Unlock()
+
+	session.close()
+
+	fmt.Println("session to delete ->", sessionID)
+	fmt.Println("all session ->", sm.sessions)
+	return nil
 }

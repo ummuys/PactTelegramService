@@ -6,6 +6,6 @@ import (
 
 type Session interface {
 	SendMessage(ctx context.Context, peer, text string) (int64, error)
-	SubscribeMessages(ctx context.Context) (<-chan BroadcastMessage, error)
-	Close()
+	SubscribeMessages(ctx context.Context) <-chan BroadcastMessage
+	close()
 }

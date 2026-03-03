@@ -7,8 +7,9 @@ import (
 )
 
 type TelegramService interface {
-	CreateSession() tgapi.SessionInfoCh
+	CreateSession(ctx context.Context) tgapi.SessionInfoCh
 	SubmitPassword(sessionID, password string) error
 	SendMessage(ctx context.Context, sessionID, peer, txt string) (int64, error)
 	SubscribeMessages(ctx context.Context, sessionID string) (<-chan tgapi.BroadcastMessage, error)
+	DeleteSession(sessionID string) error
 }

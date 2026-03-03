@@ -1,5 +1,7 @@
 package tgapi
 
+import "context"
+
 type SessionInfoCh struct {
 	SessionID string
 	QrChan    chan string
@@ -8,8 +10,8 @@ type SessionInfoCh struct {
 }
 
 type SessionManager interface {
-	CreateSession() SessionInfoCh
+	CreateSession(context.Context) SessionInfoCh
 	SubmitPassword(sessionID, password string) error
 	Get(sessionID string) Session
-	Delete(sessionID string)
+	Delete(sessionID string) error
 }

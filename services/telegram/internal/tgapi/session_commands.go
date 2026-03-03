@@ -11,7 +11,7 @@ type commands interface {
 	run(rctx context.Context, api *tg.Client)
 }
 
-// SEND MESSAGE
+//
 
 type sendMessage struct {
 	peer string
@@ -33,6 +33,5 @@ func (sm sendMessage) run(rctx context.Context, api *tg.Client) {
 	select {
 	case sm.ch <- resp:
 	case <-rctx.Done():
-	default:
 	}
 }

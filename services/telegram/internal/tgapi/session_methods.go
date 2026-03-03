@@ -2,6 +2,7 @@ package tgapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -28,15 +29,15 @@ type LiveSession struct {
 	hub *broadcastHub // комната для прослушивания сообщений
 
 	qrCh    chan string       // канал для получения qrCode
-	stateCh chan SessionState // канал для получения состояния клиента
-	errCh   chan error        // канал для получения ошибок
+	stateCh chan SessionState // канал для получения состояния клиента по авторизации
+	errCh   chan error        // канал для получения ошибок по авторизации
 	cmdCh   chan commands     // канал для получения команд после авторизации
 	passCh  chan passReq      // канал для получения пароля
 
-	closeCh   chan struct{} // канал для получения сигнала о завершения всех действий
+	closeCh   chan struct{} // канал для получения сигнала о завершения всех действий (нужен для того, если уже какое)
 	closeOnce sync.Once     // чтобы не вызвать панику
 
-	cancel context.CancelFunc // закончить сессию
+	cancel context.CancelFunc // закончить сессию (тут храниться cancel функция того ctx, который передается в функцию run)
 
 }
 
@@ -45,7 +46,16 @@ type passReq struct {
 	resp     chan error
 }
 
-func (ls *LiveSession) run(ctx context.Context) {
+func (ls *LiveSession) run(ctx context.Context, authCtx context.Context) {
+	defer func() {
+		ls.logger.Info().
+			Str("session_id", ls.sessionID).
+			Msg("live session closing")
+	}()
+
+	ls.logger.Info().
+		Str("session_id", ls.sessionID).
+		Msg("live session start")
 
 	dispatcher := tg.NewUpdateDispatcher()
 
@@ -64,9 +74,7 @@ func (ls *LiveSession) run(ctx context.Context) {
 			Timestamp: time.Unix(int64(msg.Date), 0),
 		}
 
-		if open := ls.hub.Broadcast(bm); !open {
-			return nil
-		}
+		ls.hub.Broadcast(bm)
 
 		return nil
 	})
@@ -75,46 +83,110 @@ func (ls *LiveSession) run(ctx context.Context) {
 		UpdateHandler:  dispatcher,
 		SessionStorage: ls.storage,
 	})
+	api := cli.API()
 
-	_ = cli.Run(ctx, func(rctx context.Context) error {
+	go func() {
+		<-ctx.Done()
+		ls.close()
+	}()
 
-		err := ls.stepGetQr(rctx, cli, dispatcher)
-		if err != nil {
-			select {
-			case ls.stateCh <- StateNeedPassword:
-			default:
-			}
-			err := ls.stepGetPasswordFor2FA(rctx, cli)
-			if err != nil {
-				return err
+	err := cli.Run(ctx, func(rctx context.Context) error {
+
+		if err := ls.stepGetQr(rctx, authCtx, cli, dispatcher); err != nil {
+			gerr := parseGotdError(err)
+
+			ls.logger.Warn().
+				Str("session_id", ls.sessionID).
+				Err(err).
+				Str("mapped_error", gerr.Error()).
+				Msg("auth via qr failed")
+
+			if errors.Is(gerr, errs.Err2FA) {
+
+				ls.logger.Info().
+					Str("session_id", ls.sessionID).
+					Msg("2FA required")
+
+				select {
+				case ls.stateCh <- StateNeedPassword:
+				default:
+				}
+
+				if err := ls.stepGetPasswordFor2FA(rctx, cli); err != nil {
+					gerr2 := parseGotdError(err)
+					ls.logger.Warn().
+						Str("session_id", ls.sessionID).
+						Err(err).
+						Str("mapped_error", gerr2.Error()).
+						Msg("2FA password step failed")
+
+					return gerr2
+				}
+
+				ls.logger.Info().
+					Str("session_id", ls.sessionID).
+					Msg("auth successful after 2FA")
+
+			} else {
+				select {
+				case ls.errCh <- gerr:
+				default:
+				}
+				return gerr
 			}
 		} else {
+			ls.logger.Info().
+				Str("session_id", ls.sessionID).
+				Msg("auth successful via qr")
+
 			select {
 			case ls.stateCh <- StateAuthSuccessful:
 			default:
 			}
 		}
 
-		api := cli.API()
 		for {
 			select {
 			case <-rctx.Done():
+				ls.logger.Info().
+					Str("session_id", ls.sessionID).
+					Err(rctx.Err()).
+					Msg("run context done")
 				return rctx.Err()
 			case <-ls.closeCh:
+				ls.logger.Info().
+					Str("session_id", ls.sessionID).
+					Msg("session closed by closeCh")
 				return errs.ErrSessionClosed
-			case task := <-ls.cmdCh:
+			case task, ok := <-ls.cmdCh:
+				if !ok {
+					ls.logger.Info().
+						Str("session_id", ls.sessionID).
+						Msg("cmd channel closed")
+					return errs.ErrSessionClosed
+				}
 				task.run(rctx, api)
 			}
 		}
 
 	})
 
+	if err != nil {
+		ls.logger.Error().
+			Str("session_id", ls.sessionID).
+			Err(err).
+			Msg("telegram client run exited with error")
+	}
+
 }
 
-func (ls *LiveSession) stepGetQr(ctx context.Context, cli *telegram.Client, dispatcher tg.UpdateDispatcher) error {
+func (ls *LiveSession) stepGetQr(appCtx context.Context, ctx context.Context, cli *telegram.Client, dispatcher tg.UpdateDispatcher) error {
 	tries := 0
 	attempt := 10
 	accept := qrlogin.OnLoginToken(dispatcher)
+
+	errCh := make(chan error, 1)
+
 	show := func(ctx context.Context, token qrlogin.Token) error {
 		if tries >= attempt {
 			return errs.ErrQrTimeout
@@ -126,8 +198,19 @@ func (ls *LiveSession) stepGetQr(ctx context.Context, cli *telegram.Client, disp
 		}
 		return nil
 	}
-	_, err := cli.QR().Auth(ctx, accept, show)
-	return err
+
+	go func() {
+		_, err := cli.QR().Auth(ctx, accept, show)
+		errCh <- err
+	}()
+
+	select {
+	case aerr := <-errCh:
+		return aerr
+	case <-ls.closeCh:
+		return errs.ErrSessionClosed
+	}
+
 }
 
 func (ls *LiveSession) stepGetPasswordFor2FA(ctx context.Context, cli *telegram.Client) error {
@@ -145,11 +228,17 @@ func (ls *LiveSession) stepGetPasswordFor2FA(ctx context.Context, cli *telegram.
 
 			_, err := cli.Auth().Password(ctx, msg.password)
 			if err != nil {
-				msg.resp <- errs.ErrInvalidPassword
+				select {
+				case msg.resp <- parseGotdError(err):
+				default:
+				}
 				continue
 			}
 
-			msg.resp <- nil
+			select {
+			case msg.resp <- nil:
+			default:
+			}
 			return nil
 		}
 
@@ -183,24 +272,21 @@ func (ls *LiveSession) SendMessage(ctx context.Context, peer, text string) (int6
 	}
 }
 
-func (ls *LiveSession) SubscribeMessages(ctx context.Context) (<-chan BroadcastMessage, error) {
+func (ls *LiveSession) SubscribeMessages(ctx context.Context) <-chan BroadcastMessage {
 	listenerID := uuid.New().String()
 
 	hub := ls.hub
 
-	ch, unsub, success := hub.Subscribe(listenerID)
-	if !success {
-		return nil, errs.ErrSessionBroadcastClosed
-	}
+	ch := hub.Subscribe(listenerID)
 
 	go func() {
 		<-ctx.Done()
-		unsub()
+		hub.Unsubscribe(listenerID)
 	}()
 
-	return ch, nil
+	return ch
 }
-func (ls *LiveSession) Close() {
+func (ls *LiveSession) close() {
 	ls.closeOnce.Do(func() { close(ls.closeCh) })
 
 	if ls.cancel != nil {
@@ -208,4 +294,7 @@ func (ls *LiveSession) Close() {
 	}
 
 	ls.hub.Close()
+
+	// ждем, когда всех отключат
+	<-ls.hub.Done()
 }

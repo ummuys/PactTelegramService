@@ -5,27 +5,24 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/errs"
-	"github.com/ummuys/pacttelegramservice/services/telegram/internal/repository"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/tgapi"
 )
 
 type telegramService struct {
 	sessionManager tgapi.SessionManager
-	repos          repository.SessionRepository
 	logger         zerolog.Logger
 }
 
-func NewTelegramService(sm tgapi.SessionManager, repos repository.SessionRepository, baseLogger zerolog.Logger) TelegramService {
+func NewTelegramService(sm tgapi.SessionManager, baseLogger zerolog.Logger) TelegramService {
 	logger := baseLogger.With().Str("component", "tg_svc").Logger()
 	return &telegramService{
 		sessionManager: sm,
-		repos:          repos,
 		logger:         logger,
 	}
 }
 
-func (ts *telegramService) CreateSession() tgapi.SessionInfoCh {
-	return ts.sessionManager.CreateSession()
+func (ts *telegramService) CreateSession(authCtx context.Context) tgapi.SessionInfoCh {
+	return ts.sessionManager.CreateSession(authCtx)
 }
 
 func (ts *telegramService) SubmitPassword(sessionID, password string) error {
@@ -54,5 +51,9 @@ func (ts *telegramService) SubscribeMessages(ctx context.Context, sessionID stri
 		return nil, errs.ErrSessionNotFound
 	}
 
-	return session.SubscribeMessages(ctx)
+	return session.SubscribeMessages(ctx), nil
+}
+
+func (ts *telegramService) DeleteSession(sessionID string) error {
+	return ts.sessionManager.Delete(sessionID)
 }

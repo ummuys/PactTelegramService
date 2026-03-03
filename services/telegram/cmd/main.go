@@ -13,7 +13,6 @@ import (
 	"github.com/ummuys/pacttelegramservice/pkg/config"
 	"github.com/ummuys/pacttelegramservice/pkg/logger"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/adapter"
-	"github.com/ummuys/pacttelegramservice/services/telegram/internal/repository"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/service"
 	"github.com/ummuys/pacttelegramservice/services/telegram/internal/tgapi"
 	"google.golang.org/grpc"
@@ -53,12 +52,11 @@ func main() {
 
 	// for tgapi //
 
-	sr := repository.NewSessionRepository()
 	sm := tgapi.NewSessionManager(ctx, cfg.AppID, cfg.AppHash, logs)
 	if err != nil {
 		logs.Fatal().Err(err).Str("component", "session_manager").Msg("")
 	}
-	ts := service.NewTelegramService(sm, sr, logs)
+	ts := service.NewTelegramService(sm, logs)
 
 	tsAdpt := adapter.NewTelegramServiceAdapter(ts, logs)
 
